@@ -1,15 +1,83 @@
+import asyncio
+import os
 import requests
 
-import snip.filesystem
-import snip.net
+from bs4 import BeautifulSoup as bs4
 from urllib.parse import urljoin
 
-import asyncio
-
-import os
-from bs4 import BeautifulSoup as bs4
-
 import tqdm
+
+try:
+    from snip.filesystem import easySlug
+    from snip.net import getStream, saveStreamAs
+except ImportError:
+    print("Using local network implementation")
+    import urllib.parse
+
+    def easySlug(string, repl="-", directory=False):
+        import re
+        if directory:
+            return re.sub(r"^\.|\.+$", "", easySlug(string, repl=repl, directory=False))
+        else:
+            return re.sub(r"[\\\\/:*?\"<>|\t]|\ +$", repl, string)
+
+    def getStream(url, prev_url=None):
+        """Extremely light, dumb helper to get a stream from a url
+
+        Args:
+            url (str): Remote URL
+            prev_url (str, optional): Previous url, for relative resolution
+
+        Returns:
+            Requests stream
+        """
+        url = urllib.parse.urljoin(prev_url, url)
+        stream = requests.get(url, stream=True)
+        stream.raise_for_status()
+        return stream
+
+    def _saveChunked(path, response):
+        """Save a binary stream to a path. Dumb.
+
+        Args:
+            path (str): 
+            response (response): 
+        """
+        try:
+            with open(path, 'wb') as file:
+                for chunk in response:
+                    file.write(chunk)
+        except Exception:
+            # Clean up partial file
+            os.unlink(path)
+            raise
+
+    def saveStreamAs(stream, dest_path, nc=False, verbose=False):
+        """Save a URL to a path as file
+
+        Args:
+            stream (stream): Stream
+            dest_path (str): Local path
+
+        Returns:
+            bool: Success
+        """
+        from os import path, stat
+
+        stream_length = float(stream.headers.get("Content-Length", -1))
+        if path.isfile(dest_path):
+            if nc:
+                return False
+            if stream_length == stat(dest_path).st_size:
+                if verbose:
+                    print("Not overwriting same-size file at", dest_path)
+                return False
+            else:
+                if verbose:
+                    print("File sizes do not match for output", dest_path, ":", stream_length, "!=", stat(dest_path).st_size)
+
+        _saveChunked(dest_path, stream)
+        return True
 
 
 downloaded_images = []
@@ -51,7 +119,6 @@ async def getMetadataFromAlbum(album, artist=None):
             print("ERROR!", artist, track, track_no)
             
 
-
 async def getMetadataFromTrack(track, track_no=None, album=None, artist=None):
     track_page = bs4(requests.get(track).text, features="html.parser")
     if not album:
@@ -68,23 +135,23 @@ async def getMetadataFromTrack(track, track_no=None, album=None, artist=None):
         raise
 
     out_dir = os.path.join(
-        snip.filesystem.easySlug(artist), 
-        snip.filesystem.easySlug(album)
+        easySlug(artist), 
+        easySlug(album)
     )
     os.makedirs(out_dir, exist_ok=True)
 
     __, ext = os.path.splitext(image_url)
 
     if track_no:
-        out_filename = f"{track_no} {snip.filesystem.easySlug(track_name)}{ext}"
+        out_filename = f"{track_no} {easySlug(track_name)}{ext}"
     else:
-        out_filename = f"{snip.filesystem.easySlug(track_name)}{ext}"
+        out_filename = f"{easySlug(track_name)}{ext}"
 
     # print(image_url, "->", out_dir, "as", out_filename)
-    stream = snip.net.getStream(image_url)
+    stream = getStream(image_url)
     hash_ = hash(stream.content)
     if hash_ not in downloaded_images:
-        snip.net.saveStreamAs(
+        saveStreamAs(
             stream,
             os.path.join(out_dir, out_filename[:247]),
             nc=True
