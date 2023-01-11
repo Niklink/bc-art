@@ -120,15 +120,29 @@ async def getMetadataFromAlbum(album, artist=None):
             
 
 async def getMetadataFromTrack(track, track_no=None, album=None, artist=None):
+    import re
+    import filetype
+
     track_page = bs4(requests.get(track).text, features="html.parser")
     if not album:
         album = track_page.find("span", class_="fromAlbum").text
 
-    try:
+    try:        
         track_name = track_page.find("h2", class_="trackTitle").text.strip()
+        
+        track_name = re.split(' ', track_name)
+        track_name = "-".join(track_name)
+        track_name = re.sub('&', 'and', track_name)
+        track_name = re.sub('[^a-zA-Z0-9\-]', '', track_name)
+        track_name = re.sub('-{2,}', '-', track_name)
+        track_name = re.sub('^-+|-+$', '', track_name).lower()
+        if not track_name:
+            track_name = f"{track_no}"
+
         if not artist:
             artist = track_page.find("h3", class_="albumTitle").findAll("span")[1].text.strip()
         image_url = track_page.find("a", class_="popupImage").get("href")
+        image_url = re.sub('_10.jpg', '_0', image_url)
     except AttributeError as e:
         print(e)
         print(track)
@@ -143,7 +157,7 @@ async def getMetadataFromTrack(track, track_no=None, album=None, artist=None):
     __, ext = os.path.splitext(image_url)
 
     if track_no:
-        out_filename = f"{track_no} {easySlug(track_name)}{ext}"
+        out_filename = f"{easySlug(track_name)}{ext}"
     else:
         out_filename = f"{easySlug(track_name)}{ext}"
 
@@ -156,6 +170,15 @@ async def getMetadataFromTrack(track, track_no=None, album=None, artist=None):
             os.path.join(out_dir, out_filename[:247]),
             nc=True
         )
+
+        test = out_dir + "\\" + out_filename
+        kind = str(filetype.guess(test)).lower()      
+        kind = re.sub('<filetype.types.image', '', kind).split()[0]
+        match = re.search('jpeg', kind)
+        if match:
+            kind = '.jpg'
+        os.rename(test, test + kind)
+
         downloaded_images.append(hash_)
     return
 
