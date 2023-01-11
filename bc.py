@@ -1,4 +1,5 @@
 import asyncio
+import filetype
 import os
 import re
 import requests
@@ -200,12 +201,18 @@ def considerOverwriting(out, quiet=False):
     if overwrite:
         return True
 
-    if os.path.isfile(out):
-        if not (quiet and not verbose):
-            log(f"Skip {out}, not overwriting extant file", file=sys.stderr)
-        return False
+    name = os.path.splitext(out)
+    exists = os.path.isfile(f"{name}.jpg")
+    exists = exists or os.path.isfile(f"{name}.jpeg")
+    exists = exists or os.path.isfile(f"{name}.png")
 
-    return True
+    if not exists:
+        return True
+
+    if not (quiet and not verbose):
+        log(f"Skip {out}, not overwriting extant file", file=sys.stderr)
+
+    return False
 
 async def processAlbumCover(url, seen=None):
     artist_name = extractArtistFromURL(url)
@@ -243,6 +250,8 @@ def processPage(url):
         album_name = title
         track_name = None
 
+    image_url = image_url.replace("_10.jpg", "_0")
+
     return album_name, track_name, image_url
 
 def getOutPath(image_url, artist_name, album_name, track_name, track_no):
@@ -252,7 +261,7 @@ def getOutPath(image_url, artist_name, album_name, track_name, track_no):
 
     artist_slug = easySlug(artist_name)
     album_slug = easySlug(album_name)
-    track_slug = easySlug(track_name)
+    track_slug = easySlug(track_name) or track_no or "indeterminable-track-name"
 
     if track_no and tracknums and not hsmusic:
         filename = f"{track_no} {track_slug}{ext}"
@@ -286,13 +295,22 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
             log(f"Skip {out}, re-used hash")
             return
 
-    if not allow_skipping:
-        if not considerOverwriting(out, quiet=True):
-            return
+    if not considerOverwriting(out, quiet=not allow_skipping):
+        return
 
-    log(f"{image_url} -> {out}")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     saveStreamAs(stream, out)
+
+    # Since we're downloading `_0` files, output never initially has
+    # a file extension, and we always need to rename it.
+    written = out
+    guess_ext = filetype.guess_extension(out)
+    if hsmusic and guess_ext == 'jpeg':
+        guess_ext = 'jpg'
+    out += f".{guess_ext}"
+    os.rename(written, out)
+
+    log(f"{image_url} -> {out}")
 
 if __name__ == "__main__":
     args = getArgs()

@@ -7,10 +7,10 @@
 Install dependencies:
 
 ```
-pip3 install requests beautifulsoup4 tqdm
+python3 -m pip install requests beautifulsoup4 filetype tqdm
 ```
 
-(`tqdm` is optional, but will enable nice progress bars.)
+(`tqdm` is optional, but will enable nice progress bars. The other dependencies are required.)
 
 ### Usage
 
