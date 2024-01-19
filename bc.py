@@ -5,6 +5,7 @@ import re
 import requests
 import signal
 import sys
+import tempfile
 
 from argparse import ArgumentParser
 from bs4 import BeautifulSoup as bs4
@@ -111,19 +112,6 @@ def getStream(url, prev_url=None):
     stream = requests.get(url, stream=True)
     stream.raise_for_status()
     return stream
-
-def saveStreamAs(stream, out):
-    try:
-        with open(out, 'wb') as file:
-            for chunk in stream:
-                file.write(chunk)
-    except Exception:
-        # Clean up partial file
-        os.unlink(out)
-        raise
-
-    global totalCount
-    totalCount += 1
 
 def getArgs():
     ap = ArgumentParser()
@@ -283,10 +271,6 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
             log(f"Skip {out}, re-used image: {image_url}")
             return
 
-    if dry:
-        log(f"{image_url} -> {out}")
-        return
-
     stream = getStream(image_url)
 
     if seen:
@@ -298,18 +282,26 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
     if not considerOverwriting(out, quiet=not allow_skipping):
         return
 
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    saveStreamAs(stream, out)
+    if not dry:
+        os.makedirs(os.path.dirname(out), exist_ok=True)
 
-    # Since we're downloading `_0` files, output never initially has
-    # a file extension, and we always need to rename it.
-    written = out
-    guess_ext = filetype.guess_extension(out)
-    if hsmusic and guess_ext == 'jpeg':
-        guess_ext = 'jpg'
-    out += f".{guess_ext}"
-    os.rename(written, out)
+    with tempfile.NamedTemporaryFile() as fp:
+        for chunk in stream:
+            fp.write(chunk)
 
+        # Since we're downloading `_0` files, output never initially has
+        # a file extension, and we always need to rename it.
+        guess_ext = filetype.guess_extension(fp.name)
+        if hsmusic and guess_ext == 'jpeg':
+            guess_ext = 'jpg'
+        out += f".{guess_ext}"
+
+        if not dry:
+            os.replace(fp.name, out)
+            os.link(out, fp.name)
+
+    global totalCount
+    totalCount += 1
     log(f"{image_url} -> {out}")
 
 if __name__ == "__main__":
@@ -340,4 +332,5 @@ if __name__ == "__main__":
         asyncio.run(processURL(url))
 
     imageWord = "image" if totalCount == 1 else f"images"
-    print(f"Done, downloaded {totalCount} {imageWord}")
+    verb = "would've saved" if dry else "saved"
+    print(f"Done, {verb} {totalCount} {imageWord}")
