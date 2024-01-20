@@ -1,10 +1,10 @@
-# Bandcamp Art Downloader
+# Bandcamp Art Downloader (`bc-art`)
 
 ### Installation
 
-You'll need Python 3 to run. You can check if it's installed by running `python3 --version` or `python --version`, and install it from [python.org](https://www.python.org/downloads/).
+You'll need Python 3 to run `bc-art`. You can check if it's installed by running `python3 --version` or `python --version`. If you haven't got Python 3, you can download it from [python.org](https://www.python.org/downloads/) or your package manager.
 
-Download the repository (click "Code" above, then "Download ZIP", or clone it with `git`). Then `cd` into the install and run this:
+Download the repository (click "Code" above, then "Download ZIP", or clone it with `git`). Then `cd` into the repository and run this:
 
 ```
 python3 -m pip install .
@@ -14,11 +14,11 @@ It'll install into your `site-packages` or other Python binary installation fold
 
 ### Usage
 
-Typically, just pass the URLs for the discographies, albums, or tracks you want to download artwork for, and the program will handle the rest. If you're working with HSMusic data, also provide `--hsmusic`, which will write to more suitable filenames.
+Typically, just provide the URLs for the discographies, albums, or tracks you want to download artwork for, and `bc-art` will handle the rest. If you're working with HSMusic data, also provide `--hsmusic`, which will write to more suitable filenames.
 
-Output is saved into the same folder you're running the program from, and placed under a folder based on the discography - for example, `homestuck` if you're downloading artworks from `https://homestuck.bandcamp.com/`.
+Output is saved into the same folder you're running `bc-art` from, and placed under a folder based on the discography - for example, `homestuck` if you're downloading artworks from `https://homestuck.bandcamp.com/`.
 
-If you'd like to customize further, see the option list below, or by running `--help`.
+If you'd like to customize further, see the option list below, or by running `bc-art --help`.
 
 ```
 usage: bc-art [-h]
