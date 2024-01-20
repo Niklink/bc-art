@@ -282,10 +282,13 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
     if not considerOverwriting(out, quiet=not allow_skipping):
         return
 
-    if not dry:
-        os.makedirs(os.path.dirname(out), exist_ok=True)
+    if dry:
+        temp_dir = os.getcwd()
+    else:
+        temp_dir = os.path.dirname(out)
+        os.makedirs(temp_dir, exist_ok=True)
 
-    with tempfile.NamedTemporaryFile() as fp:
+    with tempfile.NamedTemporaryFile(dir=temp_dir) as fp:
         for chunk in stream:
             fp.write(chunk)
 
