@@ -19,7 +19,7 @@ overwrite = False
 
 signal.signal(signal.SIGINT, lambda x, y: sys.exit(1))
 
-totalCount = 0
+total_count = 0
 
 try:
     from tqdm import tqdm
@@ -59,14 +59,14 @@ class _SeenStore:
 
 class Seen:
     def __init__(self):
-        self.hashStore = _SeenStore()
-        self.urlStore = _SeenStore()
+        self.hash_store = _SeenStore()
+        self.url_store = _SeenStore()
 
-    def recordHash(self, hash):
-        return self.hashStore.record(hash)
+    def record_hash(self, hash):
+        return self.hash_store.record(hash)
 
-    def recordURL(self, url):
-        return self.urlStore.record(url)
+    def record_url(self, url):
+        return self.url_store.record(url)
 
 def logging():
     return (dry and not quiet) or verbose
@@ -91,7 +91,7 @@ def guess_extension(content):
     else:
         return ext
 
-def easySlug(string):
+def normalize_name(string):
     if hsmusic:
         r = string
         r = "-".join(r.split(" "))
@@ -104,22 +104,13 @@ def easySlug(string):
     else:
         return re.sub(r"[\\\\/:*?\"<>|\t]|\ +$", "-", string)
 
-def getStream(url, prev_url=None):
-    """Extremely light, dumb helper to get a stream from a url
-
-    Args:
-        url (str): Remote URL
-        prev_url (str, optional): Previous url, for relative resolution
-
-    Returns:
-        Requests stream
-    """
+def get_stream(url, prev_url=None):
     url = urljoin(prev_url, url)
     stream = requests.get(url, stream=True)
     stream.raise_for_status()
     return stream
 
-def getArgs():
+def get_args():
     ap = ArgumentParser()
 
     ap.add_argument("--dry", action="store_true",
@@ -143,59 +134,59 @@ def getArgs():
 
     return ap.parse_args()
 
-def extractArtistFromURL(url):
+def extract_discography_from_url(url):
     o = urlparse(url)
     if o.hostname.endswith(".bandcamp.com"):
         return o.hostname[0:-len(".bandcamp.com")]
     else:
         return o.hostname
 
-async def processURL(url):
+async def process_url(url):
     o = urlparse(url)
     if o.path == "":
-        await processDiscography(f"{url}/music")
+        await process_discography(f"{url}/music")
     elif o.path == "/":
-        await processDiscography(f"{url}music")
+        await process_discography(f"{url}music")
     elif o.path == "/music":
-        await processDiscography(url)
+        await process_discography(url)
     elif o.path.startswith("/album"):
-        await processAlbum(url)
+        await process_album(url)
     elif o.path.startswith("/track"):
-        await processTrack(url)
+        await process_track(url)
     else:
         print_tqdm(f"unrecognized URL: {url}", file=sys.stderr)
 
-async def processDiscography(url):
-    artist = extractArtistFromURL(url)
+async def process_discography(url):
+    disco_name = extract_discography_from_url(url)
+
     page = bs4(requests.get(url).text, features="html.parser")
-    griditems = page.findAll("li", class_="music-grid-item")
-    for griditem in iter_tqdm(griditems, desc=artist, unit="album"):
+    grid_items = page.findAll("li", class_="music-grid-item")
+
+    for griditem in iter_tqdm(grid_items, desc=disco_name, unit="album"):
         item_url = urljoin(url, griditem.find("a").get("href"))
         if "/track/" in item_url:
-            await processTrack(item_url)
+            await process_track(item_url)
         else:
-            await processAlbum(item_url, toplevel=False)
+            await process_album(item_url, toplevel=False)
 
-async def processAlbum(url, toplevel=True):
+async def process_album(url, toplevel=True):
     seen = Seen() # One "seen" cache per album
-    await processAlbumCover(url, seen)
+
+    await process_album_cover(url, seen)
+
     page = bs4(requests.get(url).text, features="html.parser")
     tracks = page.findAll(itemprop="tracks") + page.findAll(class_="track_row_view")
+
     for track in iter_tqdm(tracks, desc=url.split("/")[-1], unit="track", leave=toplevel):
         track_no = track.find(class_="track-number-col").text
-        try:
-            track_url = urljoin(url, track.find(class_="title").find("a").get("href"))
-            await processTrack(track_url, track_no, seen=seen)
-        except AttributeError as e:
-            print_tqdm(e, file=sys.stderr)
-            print_tqdm(url, file=sys.stderr)
-            raise
+        track_url = urljoin(url, track.find(class_="title").find("a").get("href"))
+        await process_track(track_url, track_no, seen=seen)
 
-def considerOverwriting(out, quiet=False):
+def consider_overwriting(out, quiet=False):
     if overwrite:
         return True
 
-    name = os.path.splitext(out)
+    name, __ = os.path.splitext(out)
     exists = os.path.isfile(f"{name}.jpg")
     exists = exists or os.path.isfile(f"{name}.jpeg")
     exists = exists or os.path.isfile(f"{name}.png")
@@ -208,36 +199,29 @@ def considerOverwriting(out, quiet=False):
 
     return False
 
-async def processAlbumCover(url, seen=None):
-    artist_name = extractArtistFromURL(url)
-    album_name, track_name, image_url = processPage(url)
-    out = getOutPath(image_url, artist_name, album_name, "Cover", 0)
-    await processCoverDownload(image_url, out, seen, allow_skipping=False)
+async def process_album_cover(url, seen=None):
+    disco_name = extract_discography_from_url(url)
+    album_name, track_name, image_url = process_album_track_page(url)
+    out = get_out_path(image_url, disco_name, album_name, "Cover", 0)
+    await process_cover_download(image_url, out, seen, allow_skipping=False)
 
-async def processTrack(url, track_no=None, seen=None):
-    artist_name = extractArtistFromURL(url)
-    album_name, track_name, image_url = processPage(url)
-    out = getOutPath(image_url, artist_name, album_name, track_name, track_no)
-    await processCoverDownload(image_url, out, seen)
+async def process_track(url, track_no=None, seen=None):
+    disco_name = extract_discography_from_url(url)
+    album_name, track_name, image_url = process_album_track_page(url)
+    out = get_out_path(image_url, disco_name, album_name, track_name, track_no)
+    await process_cover_download(image_url, out, seen)
 
-def processPage(url):
+def process_album_track_page(url):
     page = bs4(requests.get(url).text, features="html.parser")
+    album_span = page.find("span", class_="album_span")
+    title = page.find("h2", class_="trackTitle").text.strip()
+    image_url = page.find("a", class_="popupImage").get("href")
 
-    isTrack = "/track/" in url
-
-    try:
-        fromAlbum = page.find("span", class_="fromAlbum")
-        title = page.find("h2", class_="trackTitle").text.strip()
-        image_url = page.find("a", class_="popupImage").get("href")
-    except AttributeError as e:
-        print_tqdm(e, file=sys.stderr)
-        print_tqdm(url, file=sys.stderr)
-        raise
-
-    if isTrack and fromAlbum:
-        album_name = fromAlbum.text
+    is_track = "/track/" in url
+    if is_track and album_span:
+        album_name = album_span.text
         track_name = title
-    elif isTrack:
+    elif is_track:
         album_name = "singles"
         track_name = title
     else:
@@ -248,44 +232,44 @@ def processPage(url):
 
     return album_name, track_name, image_url
 
-def getOutPath(image_url, artist_name, album_name, track_name, track_no):
+def get_out_path(image_url, disco_name, album_name, track_name, track_no):
     __, ext = os.path.splitext(image_url)
     if hsmusic and ext.lower() == '.jpeg':
         ext = '.jpg'
 
-    artist_slug = easySlug(artist_name)
-    album_slug = easySlug(album_name)
-    track_slug = easySlug(track_name) or track_no or "indeterminable-track-name"
+    artist_slug = normalize_name(disco_name)
+    album_slug = normalize_name(album_name)
+    track_slug = normalize_name(track_name) or track_no or "indeterminable-track-name"
 
     if track_no and tracknums and not hsmusic:
         filename = f"{track_no} {track_slug}{ext}"
     else:
         filename = f"{track_slug}{ext}"
 
-    artist = extractArtistFromURL(url)
+    artist = extract_discography_from_url(url)
     dir = os.path.join(artist, album_slug)
     return os.path.join(dir, filename[:247])
 
-async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
+async def process_cover_download(image_url, out, seen=None, allow_skipping=True):
     if allow_skipping:
-        if not considerOverwriting(out):
+        if not consider_overwriting(out):
             return
 
     if seen:
-        seen_result = seen.recordURL(image_url)
+        seen_result = seen.record_url(image_url)
         if allow_skipping and seen_result == 'seen':
             log(f"Skip {out}, re-used image: {image_url}")
             return
 
-    stream = getStream(image_url)
+    stream = get_stream(image_url)
 
     if seen:
-        seen_result = seen.recordHash(hash(stream.content))
+        seen_result = seen.record_hash(hash(stream.content))
         if allow_skipping and seen_result == 'seen':
             log(f"Skip {out}, re-used hash")
             return
 
-    if not considerOverwriting(out, quiet=not allow_skipping):
+    if not consider_overwriting(out, quiet=not allow_skipping):
         return
 
     if not dry:
@@ -322,8 +306,8 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
     elif write_into_file:
         out_file.close()
 
-    global totalCount
-    totalCount += 1
+    global total_count
+    total_count += 1
 
     if dry:
         log(f"[dry] {image_url} -> {out}")
@@ -331,7 +315,7 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
         log(f"{image_url} -> {out}")
 
 if __name__ == "__main__":
-    args = getArgs()
+    args = get_args()
     if args is None:
         sys.exit(1)
 
@@ -355,8 +339,8 @@ if __name__ == "__main__":
         tracknums = False
 
     for url in args.urls:
-        asyncio.run(processURL(url))
+        asyncio.run(process_url(url))
 
-    imageWord = "image" if totalCount == 1 else f"images"
+    image_word = "image" if total_count == 1 else f"images"
     verb = "would've saved" if dry else "saved"
-    print(f"Done, {verb} {totalCount} {imageWord}")
+    print(f"Done, {verb} {total_count} {image_word}")
