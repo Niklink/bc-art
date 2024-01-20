@@ -1,4 +1,4 @@
-*/
-*.log
-*.log.bak
 .DS_Store
+
+/build
+/src/*.egg-info

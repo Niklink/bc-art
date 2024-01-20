@@ -2,15 +2,15 @@
 
 ### Installation
 
-`bc.py` is the only code file you need here. You can [save it locally](https://raw.githubusercontent.com/Niklink/bc-art/master/bc.py) or download the repository.
+You'll need Python 3 to run. You can check if it's installed by running `python3 --version` or `python --version`, and install it from [python.org](https://www.python.org/downloads/).
 
-Install dependencies:
+Download the repository (click "Code" above, then "Download ZIP", or clone it with `git`). Then `cd` into the install and run this:
 
 ```
-python3 -m pip install requests beautifulsoup4 filetype tqdm
+python3 -m pip install .
 ```
 
-(`tqdm` is optional, but will enable nice progress bars. The other dependencies are required.)
+It'll install into your `site-packages` or other Python binary installation folder, so you should be able to run with `bc-art`; otherwise, try `python3 -m bc_art`.
 
 ### Usage
 
@@ -21,10 +21,10 @@ Output is saved into the same folder you're running the program from, and placed
 If you'd like to customize further, see the option list below, or by running `--help`.
 
 ```
-usage: bc.py [-h]
-             [--hsmusic] [--no-track-nums]
-             [--dry] [--quiet] [--verbose]
-             [urls ...]
+usage: bc-art [-h]
+              [--hsmusic] [--no-track-nums]
+              [--dry] [--quiet] [--verbose]
+              [urls ...]
 
 positional arguments:
   urls             discography, album, or track URLs to download art for

@@ -334,7 +334,7 @@ async def process_cover_download(image_url, out, seen=None, allow_skipping=True)
     else:
         log(f"{image_url} -> {out}")
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) == 1:
         config.print_help(sys.stderr)
         sys.exit(1)
