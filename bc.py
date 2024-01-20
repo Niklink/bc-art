@@ -305,7 +305,11 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
 
     global totalCount
     totalCount += 1
-    log(f"{image_url} -> {out}")
+
+    if dry:
+        log(f"[dry] {image_url} -> {out}")
+    else:
+        log(f"{image_url} -> {out}")
 
 if __name__ == "__main__":
     args = getArgs()
