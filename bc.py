@@ -10,13 +10,6 @@ from argparse import ArgumentParser
 from bs4 import BeautifulSoup as bs4
 from urllib.parse import urljoin, urlparse
 
-verbose = False
-quiet = False
-dry = False
-hsmusic = False
-tracknums = True
-overwrite = False
-
 signal.signal(signal.SIGINT, lambda x, y: sys.exit(1))
 
 total_count = 0
@@ -25,7 +18,7 @@ try:
     from tqdm import tqdm
 
     def will_tqdm():
-        return not quiet
+        return not config.quiet
 
     def iter_tqdm(iterable, **kwargs):
         if will_tqdm():
@@ -45,6 +38,61 @@ except ImportError:
 
     def print_tqdm(message, file=None):
         print(message, file=file)
+
+class Config:
+    def __init__(self):
+        self.urls = []
+        self.verbose = False
+        self.quiet = False
+        self.dry = False
+        self.hsmusic = False
+        self.tracknums = True
+        self.overwrite = False
+        self.init_arg_parser()
+
+    def init_arg_parser(self):
+        self.argument_parser = ArgumentParser()
+        ap = self.argument_parser
+
+        ap.add_argument("--dry", action="store_true",       help="dry run: don't download or write any files, only print what what actions would be taken")
+        ap.add_argument("--overwrite", action="store_true", help="overwrite existing files instead of skipping respective downloads")
+
+        ap.add_argument("--hsmusic", action="store_true",       help="output directories and filenames in the format hsmusic-wiki uses")
+        ap.add_argument("--no-track-nums", action="store_true", help="don't output track numbers in filenames (default for --hsmusic)")
+
+        ap.add_argument("--quiet", action="store_true",   help="don't show any logging or progress bars")
+        ap.add_argument("--verbose", action="store_true", help="print results as they are downloaded")
+
+        ap.add_argument("urls", nargs="*", help="discography, album, or track URLs to download art for")
+
+    def print_help(self, *args, **kwargs):
+        return self.argument_parser.print_help(*args, **kwargs)
+
+    def parse_args(self, *args, **kwargs):
+        return self.argument_parser.parse_args(*args, **kwargs)
+
+    def load_args(self, *args, **kwargs):
+        args = self.parse_args(*args, **kwargs)
+
+        if args.dry:
+            self.dry = True
+        if args.overwrite:
+            self.overwrite = True
+
+        if args.verbose:
+            self.verbose = True
+        if args.quiet:
+            self.verbose = False
+            self.quiet = True
+
+        if args.hsmusic:
+            self.hsmusic = True
+        if args.no_track_nums:
+            self.tracknums = False
+
+        self.urls = args.urls
+
+config = Config()
 
 class _SeenStore:
     def __init__(self):
@@ -68,31 +116,28 @@ class Seen:
     def record_url(self, url):
         return self.url_store.record(url)
 
-def logging():
-    return (dry and not quiet) or verbose
-
 def log(message, file=None):
-    log = False
-
     if file is sys.stderr:
-        log = not quiet
+        log = not config.quiet
+    elif config.verbose:
+        log = True
+    elif config.dry and not config.quiet:
+        log = True
     else:
-        log = verbose or (dry and not quiet)
+        log = False
 
-    if not log:
-        return
-
-    print_tqdm(message, file=file)
+    if log:
+        print_tqdm(message, file=file)
 
 def guess_extension(content):
     ext = filetype.guess_extension(content)
-    if hsmusic and ext == 'jpeg':
+    if config.hsmusic and ext == 'jpeg':
         return 'jpg'
     else:
         return ext
 
 def normalize_name(string):
-    if hsmusic:
+    if config.hsmusic:
         r = string
         r = "-".join(r.split(" "))
         r = r.replace("&", "and")
@@ -109,30 +154,6 @@ def get_stream(url, prev_url=None):
     stream = requests.get(url, stream=True)
     stream.raise_for_status()
     return stream
-
-def get_args():
-    ap = ArgumentParser()
-
-    ap.add_argument("--dry", action="store_true",
-                    help="dry run: don't download or write any files, only print what what actions would be taken")
-    ap.add_argument("--overwrite", action="store_true",
-                    help="overwrite existing files instead of skipping respective downloads")
-    ap.add_argument("--hsmusic", action="store_true",
-                    help="output directories and filenames in the format hsmusic-wiki uses")
-    ap.add_argument("--no-track-nums", action="store_true",
-                    help="don't output track numbers in filenames (default for --hsmusic)")
-    ap.add_argument("--quiet", action="store_true",
-                    help="don't show any logging or progress bars")
-    ap.add_argument("--verbose", action="store_true",
-                    help="print results as they are downloaded")
-    ap.add_argument("urls", nargs="*",
-                    help="discography, album, or track URLs to download art for")
-
-    if len(sys.argv) == 1:
-        ap.print_help(sys.stderr)
-        return None
-
-    return ap.parse_args()
 
 def extract_discography_from_url(url):
     o = urlparse(url)
@@ -183,7 +204,7 @@ async def process_album(url, toplevel=True):
         await process_track(track_url, track_no, seen=seen)
 
 def consider_overwriting(out, quiet=False):
-    if overwrite:
+    if config.overwrite:
         return True
 
     name, __ = os.path.splitext(out)
@@ -194,7 +215,7 @@ def consider_overwriting(out, quiet=False):
     if not exists:
         return True
 
-    if not (quiet and not verbose):
+    if (not quiet) or config.verbose:
         log(f"Skip {out}, not overwriting extant file", file=sys.stderr)
 
     return False
@@ -234,20 +255,19 @@ def process_album_track_page(url):
 
 def get_out_path(image_url, disco_name, album_name, track_name, track_no):
     __, ext = os.path.splitext(image_url)
-    if hsmusic and ext.lower() == '.jpeg':
+    if config.hsmusic and ext.lower() == '.jpeg':
         ext = '.jpg'
 
     artist_slug = normalize_name(disco_name)
     album_slug = normalize_name(album_name)
     track_slug = normalize_name(track_name) or track_no or "indeterminable-track-name"
 
-    if track_no and tracknums and not hsmusic:
+    if track_no and config.tracknums and not config.hsmusic:
         filename = f"{track_no} {track_slug}{ext}"
     else:
         filename = f"{track_slug}{ext}"
 
-    artist = extract_discography_from_url(url)
-    dir = os.path.join(artist, album_slug)
+    dir = os.path.join(disco_name, album_slug)
     return os.path.join(dir, filename[:247])
 
 async def process_cover_download(image_url, out, seen=None, allow_skipping=True):
@@ -272,7 +292,7 @@ async def process_cover_download(image_url, out, seen=None, allow_skipping=True)
     if not consider_overwriting(out, quiet=not allow_skipping):
         return
 
-    if not dry:
+    if not config.dry:
         temp_dir = os.path.dirname(out)
         os.makedirs(temp_dir, exist_ok=True)
 
@@ -288,7 +308,7 @@ async def process_cover_download(image_url, out, seen=None, allow_skipping=True)
                 continue
 
             write_into_memory = False
-            if dry:
+            if config.dry:
                 break
 
             out += f".{guess_extension(content)}"
@@ -309,38 +329,21 @@ async def process_cover_download(image_url, out, seen=None, allow_skipping=True)
     global total_count
     total_count += 1
 
-    if dry:
+    if config.dry:
         log(f"[dry] {image_url} -> {out}")
     else:
         log(f"{image_url} -> {out}")
 
 if __name__ == "__main__":
-    args = get_args()
-    if args is None:
+    if len(sys.argv) == 1:
+        config.print_help(sys.stderr)
         sys.exit(1)
 
-    if args.dry:
-        dry = True
+    config.load_args()
 
-    if args.overwrite:
-        overwrite = True
-
-    if args.verbose:
-        verbose = True
-
-    if args.quiet:
-        verbose = False
-        quiet = False
-
-    if args.hsmusic:
-        hsmusic = True
-
-    if args.no_track_nums:
-        tracknums = False
-
-    for url in args.urls:
+    for url in config.urls:
         asyncio.run(process_url(url))
 
     image_word = "image" if total_count == 1 else f"images"
-    verb = "would've saved" if dry else "saved"
+    verb = "would've saved" if config.dry else "saved"
     print(f"Done, {verb} {total_count} {image_word}")
