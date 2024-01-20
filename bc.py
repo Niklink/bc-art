@@ -5,7 +5,6 @@ import re
 import requests
 import signal
 import sys
-import tempfile
 
 from argparse import ArgumentParser
 from bs4 import BeautifulSoup as bs4
@@ -84,6 +83,13 @@ def log(message, file=None):
         return
 
     print_tqdm(message, file=file)
+
+def guess_extension(content):
+    ext = filetype.guess_extension(content)
+    if hsmusic and ext == 'jpeg':
+        return 'jpg'
+    else:
+        return ext
 
 def easySlug(string):
     if hsmusic:
@@ -282,26 +288,39 @@ async def processCoverDownload(image_url, out, seen=None, allow_skipping=True):
     if not considerOverwriting(out, quiet=not allow_skipping):
         return
 
-    if dry:
-        temp_dir = os.getcwd()
-    else:
+    if not dry:
         temp_dir = os.path.dirname(out)
         os.makedirs(temp_dir, exist_ok=True)
 
-    with tempfile.NamedTemporaryFile(dir=temp_dir) as fp:
-        for chunk in stream:
-            fp.write(chunk)
+    chunks = []
+    write_into_memory = True
+    write_into_file = False
 
-        # Since we're downloading `_0` files, output never initially has
-        # a file extension, and we always need to rename it.
-        guess_ext = filetype.guess_extension(fp.name)
-        if hsmusic and guess_ext == 'jpeg':
-            guess_ext = 'jpg'
-        out += f".{guess_ext}"
+    for chunk in stream:
+        if write_into_memory:
+            chunks.append(chunk)
+            content = b''.join(chunks)
+            if len(content) < 40:
+                continue
 
-        if not dry:
-            os.replace(fp.name, out)
-            os.link(out, fp.name)
+            write_into_memory = False
+            if dry:
+                break
+
+            out += f".{guess_extension(content)}"
+            out_file = open(out, 'wb')
+            out_file.write(content)
+            write_into_file = True
+        elif write_into_file:
+            out_file.write(chunk)
+
+    if write_into_memory:
+        out += f".{guess_extension(content)}"
+        out_file = open(out, 'wb')
+        out_file.write(content)
+        out_file.close()
+    elif write_into_file:
+        out_file.close()
 
     global totalCount
     totalCount += 1
