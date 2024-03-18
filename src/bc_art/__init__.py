@@ -234,7 +234,7 @@ async def process_track(url, track_no=None, seen=None):
 
 def process_album_track_page(url):
     page = bs4(requests.get(url).text, features="html.parser")
-    album_span = page.find("span", class_="album_span")
+    album_span = page.find("span", class_="fromAlbum")
     title = page.find("h2", class_="trackTitle").text.strip()
     image_url = page.find("a", class_="popupImage").get("href")
 
