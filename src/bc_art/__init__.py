@@ -139,12 +139,47 @@ def guess_extension(content):
 def normalize_name(string):
     if config.hsmusic:
         r = string
+
+        # Spaces to dashes
         r = "-".join(r.split(" "))
         r = r.replace("&", "and")
-        r = re.sub(r"[^a-zA-Z0-9-]", "", r)
+
+        # Punctuation as words
+        r = re.sub(r"&", "-and-", r)
+        r = re.sub(r"\+", "-plus-", r)
+        r = re.sub(r"%", "-percent-", r)
+
+        # Punctuation which only divides words, not single characters
+        r = re.sub(r"(\b[^\s.-]{2,})\.", r"\1-", r)
+        r = re.sub(r"\.([^\s.-]{2,})\b", r"-\1", r)
+
+        # Punctuation which doesn't divide a number following a non-number
+        r = re.sub(r"(?<=[0-9])\^", "-", r)
+        r = re.sub(r"\^(?![0-9])", "-", r)
+
+        # General punctuation which always separates surrounding words
+        r = re.sub(r"[/@#$%*()_=,[\]{}|\\;:<>?`~]", "-", r)
+
+        # Accented characters
+        r = re.sub(r"[áâäàå]", "a", r, flags=re.IGNORECASE)
+        r = re.sub(r"[çč]", "c", r, flags=re.IGNORECASE)
+        r = re.sub(r"[éêëè]", "e", r, flags=re.IGNORECASE)
+        r = re.sub(r"[íîïì]", "i", r, flags=re.IGNORECASE)
+        r = re.sub(r"[óôöò]", "o", r, flags=re.IGNORECASE)
+        r = re.sub(r"[úûüù]", "u", r, flags=re.IGNORECASE)
+
+        # Strip other characters
+        r = re.sub(r"[^a-z0-9-]", "", r, flags=re.IGNORECASE)
+
+        # Combine consecutive dashes
         r = re.sub(r"-{2,}", "-", r)
+
+        # Trim dashes on boundaries
         r = re.sub(r"^-+|-+$", "", r)
+
+        # Always lowercase
         r = r.lower()
+
         return r
     else:
         return re.sub(r"[\\\\/:*?\"<>|\t]|\ +$", "-", string)
