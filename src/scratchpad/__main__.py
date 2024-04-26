@@ -1,7 +1,9 @@
+import bs4
 import itertools
 import re
+import requests
 
-from bs4 import BeautifulSoup as bs4
+from urllib.parse import urlparse
 
 # Utilities
 
@@ -14,33 +16,33 @@ def iter_unique(iterable):
 # Things
 
 class Thing:
-    def satisfied(self, attr):
-        return hasattr(self, attr)
+    def satisfied(self, *attr_path):
+        own_attr, *rest = attr_path
+        if not hasattr(self, own_attr):
+            return False
+
+        if rest:
+            own_value = getattr(self, own_attr)
+            for thing in own_value:
+                if not thing.satisfied(*rest):
+                    return False
+
+        return True
+
+    def filter_query(self, query):
+        return [line for line in query if not self.satisfied(*line)]
 
 class Album(Thing):
-    pass
+    def __init__(self):
+        super().__init__()
+
+        self.urls = []
 
 class Track(Thing):
-    pass
+    def __init__(self):
+        super().__init__()
 
-# Provisions
-
-class Provision:
-    def __init__(self, provider, thing):
-        self.provider = provider
-        self.thing = thing
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        raise StopIteration
-
-class WebProvision(Provision):
-    def __init__(self, provider, thing):
-        super().__init__(provider, thing)
-
-        url = provider.select_url(thing)
+        self.urls = []
 
 # Providers
 
@@ -52,7 +54,7 @@ class Provider:
         raise NotImplementedError
 
     def open(self, thing):
-        return Provision(self, thing)
+        raise NotImplementedError
 
 class WebProvider(Provider):
     def opens(self, thing):
@@ -67,25 +69,84 @@ class WebProvider(Provider):
         raise NotImplementedError
 
     def open(self, thing):
-        return WebProvision(self, thing)
+        for result in self.slurp(self.fetch_page(thing)):
+            r_attr, r_value = result
+            r_attr = self.tidy_attr(r_attr)
+            r_value = self.tidy_value(r_value)
+            if r_value is not None:
+                yield r_attr, r_value
+
+    def fetch_page(self, thing):
+        req = requests.get(self.select_url(thing))
+        return bs4.BeautifulSoup(req.text, features="html.parser")
+
+    def tidy_attr(self, attr):
+        if isinstance(attr, str):
+            return (attr,)
+        return attr
+
+    def tidy_value(self, value):
+        if not value:
+            return None
+
+        if isinstance(value, bs4.Tag):
+            if value.name == 'meta':
+                return value['content']
+            return value.text()
+        return value
+
+    def slurp(self, soup):
+        raise NotImplementedError
+
+def is_hostname_bandcamp(url):
+    return urlparse(url).hostname.endswith('.bandcamp.com')
 
 class BandcampAlbumPageProvider(WebProvider):
     def opens_url(self, url):
         o = urlparse(url)
         return (
-            ro.hostname.endswith('.bandcamp.com') and
+            is_hostname_bandcamp(url) and
             re.search('^/album/.+', o.path)
         )
 
+    def capabilities(self, track):
+        return [
+            (Album, 'name'),
+            (Album, 'tracks', 'urls'),
+            (Album, 'tracks', 'name')
+        ]
+
+    def slurp(self, soup):
+        yield 'name', soup.css.select_one('meta[name=title]')
+
 class BandcampTrackPageProvider(WebProvider):
-    pass
+    def opens_url(self, url):
+        o = urlparse(url)
+        return (
+            is_hostname_bandcamp(url) and
+            re.search('^/track/.+', o.path)
+        )
+
+    def capabilities(self, album):
+        return [
+            (Track, 'name'),
+            (Track, 'duration')
+        ]
 
 bandcamp_providers = [
-    BandcampAlbumPageProvider,
-    BandcampTrackPageProvider
+    BandcampAlbumPageProvider(),
+    BandcampTrackPageProvider()
 ]
 
 # Secretary
+
+def capability_matches(capability, thing, *attr_path):
+    c_class, c_path = capability[0], capability[1:]
+
+    if not isinstance(thing, c_class):
+        return False
+
+    return list(attr_path) == list(c_path)
 
 class Secretary:
     providers = bandcamp_providers
@@ -105,6 +166,28 @@ class Secretary:
             if isinstance(thing, q_class):
                 yield q_path
 
+    def request(self, thing, query):
+        for provider in self.filter_providers(thing, query):
+            provision = provider.open(thing)
+            for result in provision:
+                print(result)
+
+        return False
+
+    def filter_providers(self, thing, query):
+        def any_line_matches(c):
+            return any(capability_matches(c, thing, *line) for line in query)
+
+        def any_capability_matches(p):
+            return any(any_line_matches(c) for c in p.capabilities(thing))
+
+        return (p for p in self.providers if any_capability_matches(p))
+
+def group_query(query):
+    indirect = (q for q in query if len(q) > 1)
+    groups = itertools.groupby(indirect, lambda q: q[0])
+    return [[key, (q[1:] for q in group)] for key, group in groups]
+
 class Investigation:
     def __init__(self, secretary, thing, query):
         self.secretary = secretary
@@ -112,77 +195,18 @@ class Investigation:
         self.query = query
 
     def __iter__(self):
-        self.direct_query = self.get_direct_query()
-        self.indirect_query = self.get_indirect_query()
-        self.query_stage = 'direct'
-        return self
+        filtered = self.thing.filter_query(self.query)
+        result = self.secretary.request(self.thing, filtered)
+        yield result, self.thing, list(filtered)
 
-    def get_direct_query(self):
-        query = iter(self.query)
-        return iter_unique(q if len(q) == 1 else (q[0],) for q in self.query)
+        for query_group in group_query(self.query):
+            yield from self.subs(query_group)
 
-    def get_indirect_query(self):
-        indirect = (q for q in self.query if len(q) > 1)
-        groups = itertools.groupby(indirect, lambda q: q[0])
-        return ((key, (q[1:] for q in group)) for key, group in groups)
-
-    def __next__(self):
-        if self.query_stage == 'direct':
-            try:
-                next_query = next(self.direct_query)
-            except StopIteration:
-                self.query_stage = 'indirect'
-                return next(self)
-            return self.do_direct(next_query)
-
-        elif self.query_stage == 'indirect':
-            try:
-                next_query = next(self.indirect_query)
-            except StopIteration:
-                self.query_stage = 'done'
-                raise StopIteration
-            self.prepare_indirect(next_query)
-            self.query_stage = 'indirect-sub'
-            return next(self)
-
-        elif self.query_stage == 'indirect-sub':
-            try:
-                next_investigation = next(self.sub_query)
-            except StopIteration:
-                self.query_stage = 'indirect'
-                return self.__next__()
-            self.sub_inv = iter(next_investigation)
-            self.query_stage = 'indirect-sub-inv'
-            return next(self)
-
-        elif self.query_stage == 'indirect-sub-inv':
-            try:
-                return next(self.sub_inv)
-            except StopIteration:
-                self.query_stage = 'indirect-sub'
-                self.sub_inv = None
-                return next(self)
-
-        else:
-            raise StopIteration
-
-    def do_direct(self, query):
-        attr = query[0]
-
-        if self.thing.satisfied(attr):
-            return None, self.thing, attr
-
-        return True, self.thing, attr
-
-    def prepare_indirect(self, query):
-        own_attr, sub_query = query
-
-        if not self.thing.satisfied(own_attr):
-            self.sub_query = iter([])
-            return
-
-        own_value = getattr(self.thing, own_attr)
-        self.sub_query = (self.sub(thing, sub_query) for thing in own_value)
+    def subs(self, query_group):
+        own_attr, sub_query = query_group
+        if self.thing.satisfied(own_attr):
+            for thing in getattr(self.thing, own_attr):
+                yield from self.sub(thing, sub_query)
 
     def sub(self, thing, query):
         return Investigation(self.secretary, thing, query)
@@ -196,10 +220,13 @@ if __name__ == '__main__':
     track = Track()
     album.tracks = [track]
 
-    sec = Secretary([
+    query = [
         (Album, 'name'),
-        (Album, 'tracks', 'name')
-    ])
+        (Album, 'tracks', 'name'),
+        (Album, 'tracks', 'duration')
+    ]
+
+    sec = Secretary(query)
 
     inv = sec.investigate(album)
 
