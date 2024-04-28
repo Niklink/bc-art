@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import bs4
 import itertools
+import logging
 import re
 import requests
+import sys
 
 from dataclasses import dataclass
 from typing import Any, Iterator, Self, Sequence, Type, TypeAlias, TypeVar
 from urllib.parse import urlparse
 
-AttributePath: TypeAlias = tuple[str, ...]
-AttributeQuery: TypeAlias = Sequence[AttributePath]
-T = TypeVar('T')
+logger = logging.getLogger(__name__)
 
 
 # Utilities
@@ -23,6 +23,29 @@ def iter_unique(iterable: Iterator[T]) -> Iterator[T]:
         seen.add(element)
         yield element
 
+
+# Attributes
+
+AttributePath: TypeAlias = tuple[str, ...]
+AttributeQuery: TypeAlias = Sequence[AttributePath]
+T = TypeVar('T')
+
+@dataclass
+class AttributeCapability:
+    thing_type: Type[Thing]
+    attr_path: AttributePath
+
+    def matches(self, thing: Thing, attr_path: AttributePath) -> bool:
+        if not isinstance(thing, self.thing_type):
+            return False
+
+        return list(attr_path) == list(self.attr_path)
+
+@dataclass
+class DirectedCapability:
+    thing_type: Type[Thing]
+    receiving_attr_path: AttributePath
+    providing_attr_path: AttributePath
 
 # Things
 
@@ -62,31 +85,21 @@ class Track(Thing):
 # Providers
 
 @dataclass
-class ProviderCapability:
-    thing_type: Type[Thing]
-    attr_path: AttributePath
-
-    def matches(self, thing: Thing, attr_path: AttributePath) -> bool:
-        if not isinstance(thing, self.thing_type):
-            return False
-
-        return list(attr_path) == list(self.attr_path)
-
-
-@dataclass
 class ProviderResult:
     attr_path: AttributePath
     value: Any
 
 
+Provision: TypeAlias = Iterator[ProviderResult]
+
+
 class Provider:
+    capabilities: Sequence[AttributeCapability]
+
     def opens(self, thing: Thing) -> bool:
         raise NotImplementedError
 
-    def capabilities(self, thing: Thing) -> Sequence[ProviderCapability]:
-        raise NotImplementedError
-
-    def open(self, thing: Thing) -> Iterator[ProviderResult]:
+    def open(self, thing: Thing) -> Provision:
         raise NotImplementedError
 
 
@@ -106,7 +119,7 @@ class WebProvider(Provider):
     def opens_url(self, url) -> bool:
         raise NotImplementedError
 
-    def open(self, thing: Thing) -> Iterator[ProviderResult]:
+    def open(self, thing: Thing) -> Provision:
         soup = self.fetch_page(thing)
         if not soup:
             return
@@ -121,7 +134,10 @@ class WebProvider(Provider):
     def fetch_page(self, thing) -> bs4.BeautifulSoup | None:
         url = self.select_url(thing)
         if not url:
+            logger.debug(f"WebProvider couldn't select a url for: {thing}")
             return None
+
+        logger.debug(f"WebProvider fetching page for thing: {thing}")
 
         req = requests.get(url)
         return bs4.BeautifulSoup(req.text, features="html.parser")
@@ -151,6 +167,11 @@ def is_hostname_bandcamp(url) -> bool:
 
 
 class BandcampAlbumPageProvider(WebProvider):
+    capabilities = (
+        AttributeCapability(Album, ('name',)),
+        AttributeCapability(Album, ('tracks', 'bandcamp_track_url')),
+    )
+
     def opens_url(self, url) -> bool:
         o = urlparse(url)
         return (
@@ -158,19 +179,16 @@ class BandcampAlbumPageProvider(WebProvider):
             bool(re.search('^/album/.+', o.path))
         )
 
-    def capabilities(self, track) -> Sequence[ProviderCapability]:
-        del track
-        return (
-            ProviderCapability(Album, ('name',)),
-            ProviderCapability(Album, ('tracks', 'urls')),
-            ProviderCapability(Album, ('tracks', 'name')),
-        )
-
     def slurp(self, soup) -> Iterator[WebProviderSlurpResult]:
         yield 'name', soup.css.select_one('meta[name=title]')
 
 
 class BandcampTrackPageProvider(WebProvider):
+    capabilities = (
+        AttributeCapability(Track, ('name',)),
+        AttributeCapability(Track, ('duration',)),
+    )
+
     def opens_url(self, url) -> bool:
         o = urlparse(url)
         return (
@@ -178,17 +196,87 @@ class BandcampTrackPageProvider(WebProvider):
             bool(re.search('^/track/.+', o.path))
         )
 
-    def capabilities(self, album) -> Sequence[ProviderCapability]:
-        del album
-        return (
-            ProviderCapability(Track, ('name',)),
-            ProviderCapability(Track, ('duration',)),
-        )
+    def slurp(self, soup) -> Iterator[WebProviderSlurpResult]:
+        yield 'duration', 413
 
 
 bandcamp_providers = (
     BandcampAlbumPageProvider(),
     BandcampTrackPageProvider(),
+)
+
+
+# sentinel
+
+class SentinelReadyResults(dict[AttributePath, Any]):
+    missing = object()
+
+    def __get__(self, key):
+        try:
+            return super().__get__(key)
+        except KeyError:
+            return SentinelReadyResults.missing
+
+
+@dataclass
+class SentinelResult:
+    attr_path: AttributePath
+    value: Any
+
+
+class Sentinel:
+    capabilities: Sequence[DirectedCapability]
+
+    def receive(self, thing: Thing, results: SentinelReadyResults) -> Iterator[SentinelResult]:
+        raise NotImplementedError
+
+
+class ThingSentinel(Sentinel):
+    capabilities = (
+        DirectedCapability(Thing, ('url',), ('urls',)),
+    )
+
+    def receive(self, thing: Thing, results: SentinelReadyResults) -> Iterator[SentinelResult]:
+        if hasattr(thing, 'urls'):
+            try:
+                url = results['url',]
+            except KeyError:
+                url = None
+
+            if url and not url in thing.urls:
+                thing.urls.append(url)
+
+        yield from ()
+
+
+class BandcampAlbumSentinel(Sentinel):
+    capabilities = (
+        DirectedCapability(
+            Album,
+            ('bandcamp_album_url',),
+            ('url',)),
+
+        DirectedCapability(
+            Album,
+            ('tracks', 'bandcamp_track_url'),
+            ('tracks', 'url')),
+    )
+
+    def receive(self, thing: Thing, results: SentinelReadyResults) -> Iterator[SentinelResult]:
+        assert isinstance(thing, Album)
+
+        yield SentinelResult(
+            ('url',),
+            results['bandcamp_album_url',])
+
+        yield SentinelResult(
+            ('tracks', 'url'),
+            results['tracks', 'bandcamp_track_url'])
+
+
+hsmusic_sentinels = (
+    ThingSentinel(),
+    BandcampAlbumSentinel(),
 )
 
 
@@ -204,6 +292,7 @@ class SecretaryQueryLine:
 class Secretary:
     query: Sequence[SecretaryQueryLine]
     providers: Sequence[Provider] = bandcamp_providers
+    sentinels: Sequence[Sentinel] = hsmusic_sentinels
 
     def investigate(self, thing: Thing) -> Investigation:
         return Investigation(
@@ -215,10 +304,11 @@ class Secretary:
         return [q.attr_path for q in self.query if isinstance(thing, q.thing_type)]
 
     def request(self, thing: Thing, query: AttributeQuery) -> bool:
+        logger.debug(f'Secretary received request: {query}')
         for provider in self.filter_providers(thing, query):
-            provision = provider.open(thing)
-            for result in provision:
-                print(result)
+            logger.debug(f'Secretary opening provider: {provider}')
+            results = self.sentinel_results_from_provision(provider.open(thing))
+            logger.debug(f'Secretary got provision results: {results}')
 
         return False
 
@@ -227,13 +317,16 @@ class Secretary:
             thing: Thing,
             query: AttributeQuery) -> Iterator[Provider]:
 
-        def any_line_matches(c: ProviderCapability) -> bool:
+        def any_line_matches(c: AttributeCapability) -> bool:
             return any(c.matches(thing, line) for line in query)
 
         def any_capability_matches(p: Provider) -> bool:
-            return any(any_line_matches(c) for c in p.capabilities(thing))
+            return any(any_line_matches(c) for c in p.capabilities)
 
         return (p for p in self.providers if any_capability_matches(p))
+
+    def sentinel_results_from_provision(self, provision: Provision) -> SentinelReadyResults:
+        return SentinelReadyResults((r.attr_path, r.value) for r in provision)
 
 
 def group_query(query: AttributeQuery) -> Iterator[tuple[str, AttributeQuery]]:
@@ -274,6 +367,8 @@ class Investigation:
 # Scratchpad
 
 if __name__ == '__main__':
+    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+
     album = Album()
     album.urls = ['https://erikscheele.bandcamp.com/album/one-year-older']
 
