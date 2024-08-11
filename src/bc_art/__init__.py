@@ -4,6 +4,7 @@ import os
 import re
 import requests
 import signal
+import subprocess
 import sys
 
 from argparse import ArgumentParser
@@ -185,7 +186,8 @@ def normalize_name(string):
         return re.sub(r"[\\\\/:*?\"<>|\t]|\ +$", "-", string)
 
 def get_text(url):
-    return requests.get(url).text
+    completed = subprocess.run(["curl", url], capture_output=True)
+    return completed.stdout
 
 def get_page(url):
     return bs4(get_text(url), features="html.parser")
