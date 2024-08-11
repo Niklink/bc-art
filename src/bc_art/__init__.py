@@ -184,6 +184,9 @@ def normalize_name(string):
     else:
         return re.sub(r"[\\\\/:*?\"<>|\t]|\ +$", "-", string)
 
+def get_text(url):
+    return requests.get(url).text
+
 def get_stream(url):
     stream = requests.get(url, stream=True)
     stream.raise_for_status()
@@ -214,7 +217,7 @@ async def process_url(url):
 async def process_discography(url):
     disco_name = extract_discography_from_url(url)
 
-    page = bs4(requests.get(url).text, features="html.parser")
+    page = bs4(get_text(url), features="html.parser")
     grid_items = page.findAll("li", class_="music-grid-item")
 
     for griditem in iter_tqdm(grid_items, desc=disco_name, unit="album"):
@@ -229,7 +232,7 @@ async def process_album(url, toplevel=True):
 
     await process_album_cover(url, seen)
 
-    page = bs4(requests.get(url).text, features="html.parser")
+    page = bs4(get_text(url), features="html.parser")
     tracks = page.findAll(itemprop="tracks") + page.findAll(class_="track_row_view")
 
     for track in iter_tqdm(tracks, desc=url.split("/")[-1], unit="track", leave=toplevel):
@@ -267,7 +270,7 @@ async def process_track(url, track_no=None, seen=None):
     await process_cover_download(image_url, out, seen)
 
 def process_album_track_page(url):
-    page = bs4(requests.get(url).text, features="html.parser")
+    page = bs4(get_text(url), features="html.parser")
     album_span = page.find("span", class_="fromAlbum")
     title = page.find("h2", class_="trackTitle").text.strip()
     image_url = page.find("a", class_="popupImage").get("href")
