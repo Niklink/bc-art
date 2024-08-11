@@ -184,8 +184,7 @@ def normalize_name(string):
     else:
         return re.sub(r"[\\\\/:*?\"<>|\t]|\ +$", "-", string)
 
-def get_stream(url, prev_url=None):
-    url = urljoin(prev_url, url)
+def get_stream(url):
     stream = requests.get(url, stream=True)
     stream.raise_for_status()
     return stream
