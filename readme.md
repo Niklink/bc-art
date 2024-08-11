@@ -4,6 +4,8 @@
 
 You'll need Python 3 to run `bc-art`. You can check if it's installed by running `python3 --version` or `python --version`. If you haven't got Python 3, you can download it from [python.org](https://www.python.org/downloads/) or your package manager.
 
+You will also need `curl`. You can check if it's installed by running `curl --version`. If you haven't got curl, you can download it from [curl.se](https://curl.se/download.html) or your package manager.
+
 Download the repository (click "Code" above, then "Download ZIP", or clone it with `git`). Then `cd` into the repository and run this:
 
 ```
