@@ -10,6 +10,7 @@ import sys
 from argparse import ArgumentParser
 from bs4 import BeautifulSoup as bs4
 from urllib.parse import urljoin, urlparse
+from validator_collection import validators
 
 signal.signal(signal.SIGINT, lambda x, y: sys.exit(1))
 
@@ -186,6 +187,7 @@ def normalize_name(string):
         return re.sub(r"[\\\\/:*?\"<>|\t]|\ +$", "-", string)
 
 def get_text(url):
+    url = validators.url(url)
     completed = subprocess.run(["curl", url], capture_output=True)
     return completed.stdout
 
@@ -193,6 +195,7 @@ def get_page(url):
     return bs4(get_text(url), features="html.parser")
 
 def get_stream(url):
+    url = validators.url(url)
     stream = requests.get(url, stream=True)
     stream.raise_for_status()
     return stream
